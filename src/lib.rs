@@ -64,7 +64,7 @@ pub trait Session {
     fn get_attribute<T>(&self, key: &str) -> Option<&T> where T: Serialize + Any;
 }
 
-pub trait SessionConfig {
+pub trait SessionConfig: Send + Sync {
     /// Returns the duration until a session expires
     fn expiration_duration(&self) -> Option<chrono::Duration>;
 }
@@ -160,7 +160,7 @@ impl<'a> Session for SessionInner<'a> {
 }
 
 /// A map containing all sessions as [`SessionData`]
-pub trait SessionMap {
+pub trait SessionMap: Send + Sync {
     /// Lists all sessions in this SessionMap
     fn list(&self) -> Vec<&SessionData>;
 
