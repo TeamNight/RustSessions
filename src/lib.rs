@@ -1,10 +1,11 @@
-use chrono::{DateTime, Utc, MIN_DATETIME};
+use chrono::{DateTime, Utc};
 use std::any::Any;
 use std::collections::HashMap;
-use rocket::request::FromRequest;
 use std::sync::{Arc, Mutex, RwLock};
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::Rocket;
+use std::borrow::Borrow;
+use erased_serde::Serialize;
 
 pub mod cookie;
 
@@ -30,6 +31,9 @@ pub trait Session {
     /// [`chrono::MIN_DATETIME`] if the session never expires
     fn expires(&self) -> &DateTime<Utc>;
 
+    /// Returns true if the session is expired
+    fn is_expired(&self) -> bool;
+
     /// Updates the last accessed and expiration time
     fn update_time(&mut self);
 
@@ -49,7 +53,7 @@ pub trait Session {
     ///
     /// * `key` - The key of the attribute to remove
     ///
-    fn remove(&mut self, key: &str) -> Option<Box<dyn Any>>;
+    fn remove(&mut self, key: &str) -> Option<Box<dyn Serialize>>;
 
     /// Returns the attribute behind the given key
     ///
@@ -75,7 +79,7 @@ pub struct SessionInner<'a> {
 }
 
 impl<'a> SessionInner<'a> {
-    pub fn new(id: &str, config: &'a dyn SessionConfig) -> SessionInner {
+    pub fn new(id: &str, config: &'a dyn SessionConfig) -> SessionInner<'a> {
         let creation_time = Utc::now();
 
         SessionInner {
@@ -94,7 +98,7 @@ impl<'a> SessionInner<'a> {
     }
 }
 
-impl Session for SessionInner {
+impl<'a> Session for SessionInner<'a> {
     fn id(&self) -> &str {
         self.id.as_str()
     }
@@ -113,6 +117,16 @@ impl Session for SessionInner {
 
     fn expires(&self) -> &DateTime<Utc> {
         &self.expires
+    }
+
+    fn is_expired(&self) -> bool {
+        let current_time = Utc::now();
+
+        if self.expires() <= &current_time {
+            true
+        } else {
+            false
+        }
     }
 
     fn update_time(&mut self) {
@@ -148,7 +162,7 @@ impl Session for SessionInner {
 /// A map containing all sessions as [`SessionData`]
 pub trait SessionMap {
     /// Lists all sessions in this SessionMap
-    fn list(&self) -> Vec<&dyn Session>;
+    fn list(&self) -> Vec<&SessionData>;
 
     /// Gets a session by its id
     ///
@@ -156,7 +170,7 @@ pub trait SessionMap {
     ///
     /// * `id` - A string slice containing the id
     ///
-    fn get(id: &str) -> &SessionData;
+    fn get(&self, id: &str) -> Option<&SessionData>;
 
     /// Inserts a session into the map
     ///
@@ -165,7 +179,7 @@ pub trait SessionMap {
     /// * `id` - The unique id of the session
     /// * `session` - A session data object to be moved into the map
     ///
-    fn insert(id: &str, session: SessionData);
+    fn insert(&self, id: &str, session: SessionData);
 
     /// Removes a session by its id and returns true if there was a session removed
     ///
@@ -173,16 +187,16 @@ pub trait SessionMap {
     ///
     /// * `id` - The unique id of the session
     ///
-    fn remove(id: &str) -> bool;
+    fn remove(&self, id: &str) -> bool;
 
     /// Removes expired sessions and returns the count of expired sessions
-    fn remove_expired() -> usize;
+    fn remove_expired(&self) -> usize;
 
     /// Clears the session map, invalidating all sessions.
     ///
     /// The map needs to call invalidate on all sessions before
     /// removing them from the underlying map.
-    fn clear();
+    fn clear(&self);
 }
 
 type SessionData<'a> = Arc<Mutex<SessionInner<'a>>>;
@@ -192,7 +206,7 @@ pub struct LocalSessionMap<'a> {
 }
 
 impl<'a> LocalSessionMap<'a> {
-    pub fn new() -> LocalSessionMap {
+    pub fn new() -> LocalSessionMap<'a> {
         LocalSessionMap {
             sessions: RwLock::new(HashMap::new())
         }
@@ -200,28 +214,74 @@ impl<'a> LocalSessionMap<'a> {
 }
 
 impl<'a> SessionMap for LocalSessionMap<'a> {
-    fn list(&self) -> Vec<&dyn Session> {
-        todo!()
+    fn list(&self) -> Vec<&SessionData<'a>> {
+        match self.sessions.read() {
+            Ok(map) => map.values().collect(),
+            Err(e) => panic!("Unable to acquire session map lock, {}", e)
+        }
     }
 
-    fn get(id: &str) -> &SessionData<'a> {
-        todo!()
+    fn get(&self, id: &str) -> Option<&SessionData<'a>> {
+        match self.sessions.read() {
+            Ok(map) => map.get(id),
+            Err(e) => panic!("Unable to acquire session map lock: {}", e)
+        }
     }
 
-    fn insert(id: &str, session: SessionData<'a>) {
-        todo!()
+    fn insert(&self, id: &str, session: SessionData<'a>) {
+        match self.sessions.write() {
+            Ok(mut map) => map.insert(id.to_string(), session),
+            Err(e) => panic!("Unable to acqurie session map write lock: {}", e)
+        };
     }
 
-    fn remove(id: &str) -> bool {
-        todo!()
+    fn remove(&self, id: &str) -> bool {
+        match self.sessions.write() {
+            Ok(mut map) => {
+                match map.remove(id) {
+                    None => false,
+                    Some(_) => true
+                }
+            },
+            Err(e) => panic!("Unable to acqurie session map write lock: {}", e)
+        }
     }
 
-    fn remove_expired() -> usize {
-        todo!()
+    fn remove_expired(&self) -> usize {
+        let mut removed: usize = 0;
+
+        match self.sessions.write() {
+            Ok(mut map) => {
+                for val in map.values() {
+                    match val.lock() {
+                        Ok(data) => {
+                            if data.is_expired() {
+                                map.remove(data.id());
+                                removed += 1;
+                            }
+                        }
+                        Err(err) => todo!()
+                    }
+                }
+            },
+            Err(e) => panic!("Unable to acqurie session map write lock: {}", e)
+        };
+
+        removed
     }
 
-    fn clear() {
-        todo!()
+    fn clear(&self) {
+        match self.sessions.write() {
+            Ok(mut map) => {
+                for val in map.values() {
+                    match val.lock() {
+                        Ok(data) => map.remove(data.id()),
+                        Err(err) => todo!()
+                    }
+                }
+            },
+            Err(e) => panic!("Unable to acquire session map write lock: {}", e)
+        };
     }
 }
 
@@ -231,8 +291,8 @@ struct SessionStore {
 
 impl SessionStore {
     /// Lists all sessions in this SessionStore
-    fn list(&self) -> Vec<&dyn Session> {
-        vec![]
+    fn list(&self) -> Vec<&SessionData> {
+        self.inner.borrow().list()
     }
 
     /// Gets a session by its id
@@ -241,11 +301,17 @@ impl SessionStore {
     ///
     /// * `id` - A string slice containing the id
     ///
-    fn get<T>(id: &str) -> Option<T> where T: Session + Clone + From<SessionData> {
-        None
+    fn get<'a, T>(&self, id: &str) -> Option<T> where T: Session + Clone + From<&'a SessionData<'a>> {
+        let session_data = self.inner.borrow().get(id);
+
+        if let Some(data) = session_data {
+            Some(T::from(data))
+        } else {
+            None
+        }
     }
 
-    /// Inserts a session into the map
+    /// Saves a session to the store
     ///
     /// # Arguments
     ///
@@ -253,8 +319,10 @@ impl SessionStore {
     /// * `session` - A struct implementing the [`Session`], [`Clone`] and [`Into<SessionData>`]
     ///               traits
     ///
-    fn insert<T>(id: &str, session: T) where T: Session + Clone + Into<SessionData> {
+    fn insert<'a, T>(&self, id: &str, session: T) where T: Session + Clone + Into<&'a SessionData<'a>> {
+        let session_data: &SessionData = session.into();
 
+        self.inner.borrow().insert(id, session_data.clone())
     }
 
     /// Removes a session by its id and returns true if there was a session removed
@@ -263,21 +331,21 @@ impl SessionStore {
     ///
     /// * `id` - The unique id of the session
     ///
-    fn remove(id: &str) -> bool {
-        false
+    fn remove(&self, id: &str) -> bool {
+        self.inner.borrow().remove(id)
     }
 
     /// Removes expired sessions and returns the count of expired sessions
-    fn remove_expired() -> usize {
-        0
+    fn remove_expired(&self) -> usize {
+        self.inner.borrow().remove_expired()
     }
 
-    /// Clears the session map, invalidating all sessions.
+    /// Clears the session store, invalidating all sessions.
     ///
-    /// The map needs to call invalidate on all sessions before
-    /// removing them from the underlying map.
-    fn clear() {
-
+    /// The underlying map needs to call invalidate on all sessions before
+    /// removing them.
+    fn clear(&self) {
+        self.inner.borrow().clear();
     }
 }
 
@@ -290,7 +358,7 @@ impl SessionStore {
 
 pub struct Sessions {
     store: SessionStore,
-    configs: Vec<dyn SessionConfig>
+    configs: Vec<Box<dyn SessionConfig>>
 }
 
 impl Sessions {
@@ -302,12 +370,14 @@ impl Sessions {
     }
 
     fn config<T: SessionConfig>(mut self, config: T) -> Sessions {
-        self.configs.push(config);
+        self.configs.push(Box::new(config));
 
         self
     }
 
     fn session_map<T: SessionMap>(mut self, map: T) -> Sessions {
+        self.store.inner = map;
+
         self
     }
 
@@ -326,7 +396,6 @@ pub struct SessionFairing {
     inner: Sessions
 }
 
-#[rocket::async_trait]
 impl Fairing for SessionFairing {
     fn info(&self) -> Info {
         Info {

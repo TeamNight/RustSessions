@@ -6,7 +6,7 @@ pub struct CookieSession<'a> {
     data: SessionData<'a>
 }
 
-impl FromRequest for CookieSession {
+impl FromRequest<'_, '_> for CookieSession<'_> {
     type Error = ();
 
     fn from_request(request: &Request) -> Outcome<Self, Self::Error> {
@@ -14,19 +14,19 @@ impl FromRequest for CookieSession {
     }
 }
 
-impl From<SessionData> for CookieSession {
-    fn from<'a>(data: SessionData<'a>) -> Self {
+impl From<&SessionData<'_>> for CookieSession<'_> {
+    fn from(data: &SessionData) -> Self {
         todo!()
     }
 }
 
-impl From<CookieSession> for SessionData {
-    fn from<'a>(session: CookieSession<'a>) -> Self {
+impl From<CookieSession<'_>> for &SessionData<'_> {
+    fn from(session: CookieSession) -> Self {
         todo!()
     }
 }
 
-impl Clone for CookieSession {
+impl Clone for CookieSession<'_> {
     fn clone(&self) -> Self {
         CookieSession {
             data: SessionData::clone()
