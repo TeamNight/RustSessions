@@ -274,7 +274,7 @@ impl<'a> SessionMap for LocalSessionMap<'a> {
         match self.sessions.write() {
             Ok(mut map) => {
                 for val in map.values() {
-                    match val.lock() {
+                    match val.try_lock() {
                         Ok(data) => map.remove(data.id()),
                         Err(err) => todo!()
                     }
