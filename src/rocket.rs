@@ -1,18 +1,20 @@
-use crate::{SessionStore, SessionConfig, LocalSessionMap, SessionMap, SessionData, SessionInner};
+use crate::{SessionStore, SessionConfig, LocalSessionMap, SessionMap, SessionData, SessionInner, Session};
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::{Rocket, Request, State};
-use std::mem;
+use std::{mem, fmt};
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
-use std::sync::Mutex;
-use std::ops::DerefMut;
+use std::sync::{Mutex, PoisonError, MutexGuard, Arc, Weak};
+use std::ops::{DerefMut, Deref};
 use rocket::request::{FromRequest, Outcome};
 use rocket::http::{Status, Cookie};
 use chrono::Duration;
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 
-struct NoSessionError;
+fn upcast_arc<T: SessionConfig>(config: Arc<T>) -> Arc<dyn SessionConfig> {
+    config
+}
 
 pub struct CookieSessionConfig {
     cookie_name: String,
@@ -22,7 +24,7 @@ pub struct CookieSessionConfig {
 
 impl CookieSessionConfig {
     pub fn new<F>(cookie_name: &str, expiration_duration: Duration, id_gen: F) -> CookieSessionConfig
-    where F: Fn() -> String + Send + Sync {
+    where F: Fn() -> String + Send + Sync + 'static {
         CookieSessionConfig {
             cookie_name: cookie_name.to_string(),
             expiration: expiration_duration,
@@ -70,11 +72,39 @@ pub struct CookieSession {
     data: SessionData
 }
 
+impl Session for CookieSession {
+    fn access<F: FnMut(&SessionInner)>(&self, mut closure: F) -> Result<(), PoisonError<MutexGuard<SessionInner>>> {
+        match self.data.lock() {
+            Ok(mut inner) => {
+                closure(&mut *inner);
+                Ok(())
+            },
+            Err(err) => Err(err)
+        }
+    }
+
+    fn invalidate(&self) {
+        match self.data.lock() {
+            Ok(mut inner) => {
+                inner.invalidate();
+            },
+            Err(err) => todo!()
+        }
+
+        //Call SessionStore::remove(&str)
+        todo!()
+    }
+
+    fn into_data_ref(&self) -> &SessionData {
+        &self.data
+    }
+}
+
 impl FromRequest<'_, '_> for CookieSession {
-    type Error = NoSessionError;
+    type Error = ();
 
     fn from_request(request: &Request) -> Outcome<Self, Self::Error> {
-        let cookie_config = request.guard::<State<CookieSessionConfig>>()?;
+        let cookie_config = request.guard::<State<Arc<CookieSessionConfig>>>()?;
         let session_store = request.guard::<State<SessionStore>>()?;
 
         //What needs to be implemented is:
@@ -92,10 +122,10 @@ impl FromRequest<'_, '_> for CookieSession {
                 let id: String = generate();
 
                 let session = CookieSession {
-                    data: SessionData::new(Mutex::new(SessionInner::new(id.as_str(), &*cookie_config))),
+                    data: SessionData::new(Mutex::new(SessionInner::new(id.as_str(), cookie_config.clone()))),
                 };
 
-                session_store.insert(id.as_str(), session.clone());
+                session_store.insert(id.as_str(), &session);
 
                 Outcome::Success(session)
             },
@@ -107,7 +137,7 @@ impl FromRequest<'_, '_> for CookieSession {
                         Outcome::Success(cookie_session)
                     },
                     None => {
-                        request.cookies().remove(Cookie::named(cookie.name()));
+                        request.cookies().remove(Cookie::named(cookie.name().to_owned()));
 
                         Self::from_request(request)
                     }
@@ -122,12 +152,6 @@ impl From<SessionData> for CookieSession {
         CookieSession {
             data
         }
-    }
-}
-
-impl<'a> From<&'a CookieSession> for &'a SessionData {
-    fn from(session: &'a CookieSession) -> Self {
-        &session.data
     }
 }
 

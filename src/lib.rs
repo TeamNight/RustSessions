@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use std::any::Any;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock, PoisonError, MutexGuard, Weak};
 use std::borrow::Borrow;
 use erased_serde::Serialize;
 
@@ -35,10 +35,13 @@ pub trait Session {
     ///
     /// * `closure` - The method to access the session data
     ///
-    fn access<F: FnMut(&SessionInner)>(closure: F);
+    fn access<F: FnMut(&SessionInner)>(&self, closure: F) -> Result<(), PoisonError<MutexGuard<SessionInner>>>;
 
     /// Invalidates the session by setting expiration date to [`Session.creation_time()`]
-    fn invalidate(&mut self);
+    fn invalidate(&self);
+
+    /// Returns the underlying session data used by this session.
+    fn into_data_ref(&self) -> &SessionData;
 }
 
 /// Configuration for sessions, such as duration until the session expires
@@ -57,7 +60,7 @@ pub struct SessionInner {
     last_accessed: DateTime<Utc>,
     expires: DateTime<Utc>,
     attributes: HashMap<String, Box<dyn Attribute>>,
-    _config: &'static dyn SessionConfig
+    _config: Arc<dyn SessionConfig>
 }
 
 impl SessionInner {
@@ -67,7 +70,7 @@ impl SessionInner {
     ///
     /// * `id` - The id of the session
     /// * `config` - The session config for this session type
-    pub fn new(id: &str, config: &'static dyn SessionConfig) -> SessionInner {
+    pub fn new<T: SessionConfig>(id: &str, config: Arc<T>) -> SessionInner {
         let creation_time = Utc::now();
 
         SessionInner {
@@ -390,8 +393,8 @@ impl SessionStore {
     /// * `session` - A struct implementing the [`Session`], [`Clone`] and [`Into<SessionData>`]
     ///               traits
     ///
-    fn insert<'a, T>(&self, id: &str, session: &'a T) where T: Session + Clone + Into<&'a SessionData> {
-        let session_data: &SessionData = session.into();
+    fn insert<'a, T>(&self, id: &str, session: &'a T) where T: Session + Clone {
+        let session_data: &SessionData = session.into_data_ref();
 
         let map: &dyn SessionMap = self.inner.borrow();
         map.insert(id, session_data.clone())
