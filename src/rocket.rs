@@ -73,7 +73,7 @@ pub struct CookieSession {
 }
 
 impl Session for CookieSession {
-    fn access<F: FnMut(&SessionInner)>(&self, mut closure: F) -> Result<(), PoisonError<MutexGuard<SessionInner>>> {
+    fn access<F: FnMut(&mut SessionInner)>(&self, mut closure: F) -> Result<(), PoisonError<MutexGuard<SessionInner>>> {
         match self.data.lock() {
             Ok(mut inner) => {
                 closure(&mut *inner);
@@ -83,19 +83,7 @@ impl Session for CookieSession {
         }
     }
 
-    fn invalidate(&self) {
-        match self.data.lock() {
-            Ok(mut inner) => {
-                inner.invalidate();
-            },
-            Err(err) => todo!()
-        }
-
-        //Call SessionStore::remove(&str)
-        todo!()
-    }
-
-    fn into_data_ref(&self) -> &SessionData {
+    fn data_ref(&self) -> &SessionData {
         &self.data
     }
 }

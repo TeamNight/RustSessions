@@ -1,3 +1,5 @@
+#[macro_use] extern crate log;
+
 use chrono::{DateTime, Utc};
 use std::any::Any;
 use std::collections::HashMap;
@@ -35,13 +37,10 @@ pub trait Session {
     ///
     /// * `closure` - The method to access the session data
     ///
-    fn access<F: FnMut(&SessionInner)>(&self, closure: F) -> Result<(), PoisonError<MutexGuard<SessionInner>>>;
-
-    /// Invalidates the session by setting expiration date to [`Session.creation_time()`]
-    fn invalidate(&self);
+    fn access<F: FnMut(&mut SessionInner)>(&self, closure: F) -> Result<(), PoisonError<MutexGuard<SessionInner>>>;
 
     /// Returns the underlying session data used by this session.
-    fn into_data_ref(&self) -> &SessionData;
+    fn data_ref(&self) -> &SessionData;
 }
 
 /// Configuration for sessions, such as duration until the session expires
@@ -318,7 +317,7 @@ impl SessionMap for LocalSessionMap {
                 map.retain(|key, val| {
                     match val.lock() {
                         Ok(mut data) => data.invalidate(),
-                        Err(err) => todo!(),
+                        Err(_) => (),
                     };
                     false
                 })
@@ -346,7 +345,7 @@ impl SessionStore {
         }
     }
     /// Lists all sessions in this SessionStore
-    fn list<F: Fn(Vec<&SessionData>)>(&self, closure: F)  {
+    pub fn list<F: Fn(Vec<&SessionData>)>(&self, closure: F)  {
         let map: &dyn SessionMap = self.inner.borrow();
         map.list(&closure);
     }
@@ -359,7 +358,7 @@ impl SessionStore {
     ///
     /// * `id` - A string slice containing the id
     ///
-    fn get<'a, T>(&'a self, id: &str) -> Option<T> where T: Session + Clone + From<SessionData> {
+    pub fn get<'a, T>(&'a self, id: &str) -> Option<T> where T: Session + Clone + From<SessionData> {
         let map: &'a dyn SessionMap = self.inner.borrow();
         let session_data = map.get(id);
 
@@ -373,8 +372,7 @@ impl SessionStore {
                     Some(T::from(data.clone()))
                 }
                 Err(err) => {
-                    /// TODO: add error message
-                    /// error!("Removing session {} from session map due to {}", id, err)
+                    error!("Removing session {} from session map due to {}", id, err);
                     None
                 }
             }
@@ -393,11 +391,28 @@ impl SessionStore {
     /// * `session` - A struct implementing the [`Session`], [`Clone`] and [`Into<SessionData>`]
     ///               traits
     ///
-    fn insert<'a, T>(&self, id: &str, session: &'a T) where T: Session + Clone {
-        let session_data: &SessionData = session.into_data_ref();
+    pub fn insert<'a, T>(&self, id: &str, session: &'a T) where T: Session + Clone {
+        let session_data: &SessionData = session.data_ref();
 
         let map: &dyn SessionMap = self.inner.borrow();
         map.insert(id, session_data.clone())
+    }
+
+    /// Invalidates a session and removes it from the map
+    ///
+    /// # Arguments
+    /// * `session` - The session to invalidate
+    ///
+    pub fn invalidate<T>(&self, session: &T) -> bool where T: Session {
+        let map: &dyn SessionMap = self.inner.borrow();
+        let mut success = false;
+
+        session.access(|mut data| {
+            data.invalidate();
+            success = map.remove(data.id());
+        });
+
+        success
     }
 
     /// Removes a session by its id and returns true if there was a session removed
@@ -406,13 +421,13 @@ impl SessionStore {
     ///
     /// * `id` - The unique id of the session
     ///
-    fn remove(&self, id: &str) -> bool {
+    pub fn remove(&self, id: &str) -> bool {
         let map: &dyn SessionMap = self.inner.borrow();
         map.remove(id)
     }
 
     /// Removes expired sessions and returns the count of expired sessions
-    fn remove_expired(&self) -> usize {
+    pub fn remove_expired(&self) -> usize {
         let map: &dyn SessionMap = self.inner.borrow();
         map.remove_expired()
     }
@@ -421,7 +436,7 @@ impl SessionStore {
     ///
     /// The underlying map needs to call invalidate on all sessions before
     /// removing them.
-    fn clear(&self) {
+    pub fn clear(&self) {
         let map: &dyn SessionMap = self.inner.borrow();
         map.clear();
     }
