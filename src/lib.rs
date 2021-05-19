@@ -88,7 +88,7 @@ impl SessionInner {
     }
 
     /// Returns the id of the session
-    fn id(&self) -> &str {
+    pub fn id(&self) -> &str {
         self.id.as_str()
     }
 
@@ -98,28 +98,28 @@ impl SessionInner {
     ///
     /// * `new_id` - String slice for new id
     ///
-    fn set_id(&mut self, new_id: &str) {
+    pub fn set_id(&mut self, new_id: &str) {
         self.id = new_id.to_string();
     }
 
     /// Returns the creation time of the session
-    fn creation_time(&self) -> &DateTime<Utc> {
+    pub fn creation_time(&self) -> &DateTime<Utc> {
         &self.created
     }
 
     /// Returns the time the user last accessed using the session
-    fn last_accessed(&self) -> &DateTime<Utc> {
+    pub fn last_accessed(&self) -> &DateTime<Utc> {
         &self.last_accessed
     }
 
     /// Returns the time the session will expire or
     /// [`chrono::MIN_DATETIME`] if the session never expires
-    fn expires(&self) -> &DateTime<Utc> {
+    pub fn expires(&self) -> &DateTime<Utc> {
         &self.expires
     }
 
     /// Returns true if the session is expired
-    fn is_expired(&self) -> bool {
+    pub fn is_expired(&self) -> bool {
         let current_time = Utc::now();
 
         if self.expires() <= &current_time {
@@ -130,7 +130,7 @@ impl SessionInner {
     }
 
     /// Updates the last accessed and expiration time
-    fn update_time(&mut self) {
+    pub fn update_time(&mut self) {
         self.last_accessed = Utc::now();
 
         if let Some(duration) = self._config.expiration_duration() {
@@ -139,7 +139,7 @@ impl SessionInner {
     }
 
     /// Invalidates the session by setting expiration date to [`Session.creation_time()`]
-    fn invalidate(&mut self) {
+    pub fn invalidate(&mut self) {
         self.expires = self.created.clone();
     }
 
@@ -150,7 +150,7 @@ impl SessionInner {
     /// * `key` - Unique string key for the attribute
     /// * `attribute` - the attribute
     ///
-    fn insert<T:>(&mut self, key: &str, attribute: T)
+    pub fn insert<T:>(&mut self, key: &str, attribute: T)
         where T: Attribute {
         self.attributes.insert(key.to_string(), Box::new(attribute));
     }
@@ -162,7 +162,7 @@ impl SessionInner {
     ///
     /// * `key` - The key of the attribute to remove
     ///
-    fn remove(&mut self, key: &str) -> Option<Box<dyn Attribute>> {
+    pub fn remove(&mut self, key: &str) -> Option<Box<dyn Attribute>> {
         self.attributes.remove(key)
     }
 
@@ -172,7 +172,7 @@ impl SessionInner {
     ///
     /// * `key` - The key of the attribute to return
     ///
-    fn get_attribute<T>(&self, key: &str) -> Option<&T>
+    pub fn get_attribute<T>(&self, key: &str) -> Option<&T>
         where T: Attribute {
         let result = self.attributes.get(key);
 
@@ -233,7 +233,7 @@ pub trait SessionMap: Send + Sync + 'static {
 }
 
 /// The type to protect session data from data races
-type SessionData = Arc<Mutex<SessionInner>>;
+pub type SessionData = Arc<Mutex<SessionInner>>;
 
 /// A session map to save session data in RAM
 pub struct LocalSessionMap {
