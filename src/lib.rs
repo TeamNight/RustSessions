@@ -33,6 +33,9 @@ pub trait Session {
     ///
     /// All access, mutable and immutable shall be done in this method.
     ///
+    /// Depending on your implementation of the session map, you might need to call
+    /// [`SessionStore::insert`] in order to update the session.
+    ///
     /// # Arguments
     ///
     /// * `closure` - The method to access the session data
@@ -235,7 +238,8 @@ pub trait SessionMap: Send + Sync + 'static {
 /// The type to protect session data from data races
 pub type SessionData = Arc<Mutex<SessionInner>>;
 
-/// A session map to save session data in RAM
+/// A session map to save session data in RAM.
+/// This map does not require to call [`SessionStore::insert`] to update session data.
 pub struct LocalSessionMap {
     sessions: RwLock<HashMap<String, SessionData>>
 }
@@ -373,6 +377,8 @@ impl SessionStore {
                 }
                 Err(err) => {
                     error!("Removing session {} from session map due to {}", id, err);
+                    map.remove(id);
+
                     None
                 }
             }
